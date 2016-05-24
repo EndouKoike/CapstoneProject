@@ -1,0 +1,447 @@
+---
+title: |
+  | Milestone Report:  
+  | Exploratory Analysis of the SwiftKey Dataset  
+author: "Kosntantinos Koumoundouros"
+output: html_document
+---
+
+
+## Introduction - Data
+This Milestone Report is part of the Data Science Specialization Capstone provided by John Hopkins University /coursera.
+
+The purpose of the Milestone Report is to provide all the steps that took place for Data Cleansing and simple Tokenization of the Swiftkey dataset for English language UTF-8. 
+
+Dataset provided -downloaded from coursera [Coursera-SwiftKey.zip](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip). Coursera-SwiftKey.zip includes four folders, for different languages, with txt files inside. In our case we are interesting only for English.
+
+Before we load data, we can see from **Code_Chunk_1** in Appendix, the size of three files:
+
+| en_US.blogs.txt | en_US.news.txt | en_US.twitter.txt |
+|:---------------:|:--------------:|:-----------------:|
+|   200.4242 MB   |   196.2775 MB  |     159.3641 MB   |
+
+
+## Loading, Sampling and Storing Data
+### Loading
+After exctraction of zip file in working space we can load our three files. 
+```{r Load Source Files, message=FALSE, warning=FALSE}
+## Reading three source txt files
+blogs <- readLines('data_source/en_US.blogs.txt', encoding = 'UTF-8')
+news <- readLines('data_source/en_US.news.txt', encoding = 'UTF-8')
+twitter <- readLines('data_source/en_US.twitter.txt', encoding = 'UTF-8')
+
+```
+
+Number of lines for each file:
+```{r Length Of Files, echo=FALSE, message=TRUE, warning=TRUE}
+## Number of lines
+length <- as.data.frame(matrix(ncol = 2))
+length <- rbind(length, c('blogs.txt', length(blogs)))
+length <- rbind(length, c('news.txt', length(news)))
+length <- rbind(length, c('twitter.txt', length(twitter)))
+names(length) <- c('File', 'Lines')
+length <- length[-1,]
+rownames(length) <- NULL
+length
+
+```
+
+### Sampling and Storing Data
+Because of large amount of data i make sample files and i store them for the next step (corpus creating).
+```{r, warning=FALSE}
+## Using rbinom() for creating sampling and save new sample txt files
+set.seed(1986)
+size <- 1000
+
+blogs <- blogs[rbinom(size, length(blogs), 0.5)]
+news <- news[rbinom(size, length(news), 0.5)]
+twitter <- twitter[rbinom(size, length(twitter), 0.5)]
+
+## Store files in a sample repo
+writeLines(blogs, con = 'data_source/sample/blogs.txt', sep = "\n", useBytes = FALSE)
+writeLines(news, con = 'data_source/sample/news.txt', sep = "\n", useBytes = FALSE)
+writeLines(twitter, con = 'data_source/sample/twitter.txt', sep = "\n", useBytes = FALSE)
+
+## remove objects
+rm(blogs, news, twitter, size)
+```
+
+### Corpus Creation from Sample Files
+Create Corpus from sample repo and store it with `tm()` packet 
+```{r Create Corpus, message=FALSE, warning=FALSE}
+library(tm)   
+
+## Create Corpus
+reposample <- 'data_source/sample'
+
+corpus <- VCorpus(DirSource(reposample, pattern = '.txt', encoding = 'UTF-8'),
+                   readerControl = list(language = 'en'))
+
+
+## Save corpus and remove objects
+save(corpus, file = 'data_source/corpus.RData')
+rm(reposample, corpus)
+```
+
+## Data Preprocessing and Cleansing
+In this step all crusal processing for cleansing take place. Data cleansing is nessecary for better Tokenization and modeling.
+As we can see from below plot, the simple tokenization is not correct because words with no "mean" are used (words with numbers, punctuation, stopwords etc.)
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+library(tm)
+library(SnowballC)
+library(RWeka)
+
+load('data_source/corpus.RData')
+corpus1 <- corpus
+dtm <- DocumentTermMatrix(corpus1)
+## Count frequency of worlds
+freq <- colSums(as.matrix(dtm))
+wordCount <- data.frame(word = names(freq), freq = freq)
+wordCount <- wordCount[order(wordCount$freq, decreasing=TRUE),]
+rownames(wordCount) <- NULL
+rm(freq)
+library('ggplot2')
+
+top10 <- head(wordCount, 10)
+                
+p <- ggplot(top10, aes(reorder(word, -freq), freq))
+p <- p + geom_bar(stat = 'identity')
+p <- p + xlab('Word')
+p <- p + ylab('Frequnecy')
+p <- p + ggtitle('Top 10 Most Frequent Word Without Cleansing')
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+p
+```
+  
+After all neseecary process (data cleansing) the plot is very different (more information about cleansing **Code_Chunk_3**):
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+## Load profanity.csv and make custom functions for data cleansing
+# https://github.com/shutterstock/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/
+profanity <- readLines('data_source/profanity.csv', encoding = 'UTF-8')
+nonASCII <- function(x) iconv(x, 'latin1', 'ASCII', '')
+removeURL <- function(x) gsub('www[[:alnum:]]*.*|htt[[:alnum:]]*.*', '', x)
+
+
+## Processing
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, content_transformer(nonASCII))
+corpus <- tm_map(corpus, content_transformer(removeURL))
+corpus <- tm_map(corpus, removeWords, stopwords('SMART'))
+corpus <- tm_map(corpus, removePunctuation) 
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removeWords, stopwords('en'))
+corpus <- tm_map(corpus, removeWords, profanity)
+corpus <- tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, stemDocument) 
+
+rm(profanity, nonASCII, removeURL)
+
+
+## Stage the Data   
+dtm <- DocumentTermMatrix(corpus)
+tdm <- TermDocumentMatrix(corpus)
+
+## Count frequency of worlds
+freq <- colSums(as.matrix(dtm))
+wordCount <- data.frame(word = names(freq), freq = freq)
+wordCount <- wordCount[order(wordCount$freq, decreasing=TRUE),]
+rownames(wordCount) <- NULL
+rm(freq)
+library('ggplot2')
+
+top10 <- head(wordCount, 10)
+                
+p <- ggplot(top10, aes(reorder(word, -freq), freq))
+p <- p + geom_bar(stat = 'identity')
+p <- p + xlab('Word')
+p <- p + ylab('Frequnecy')
+p <- p + ggtitle('Top 10 Most Frequent Word With Cleansing')
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+p
+```  
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+library('wordcloud')
+comparison <- as.matrix(tdm)
+colnames(comparison) <- c('blogs', 'news', 'twitter')
+```
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+comparison.cloud(comparison,max.words=300,random.order=FALSE)
+```
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+library('wordcloud')
+cloud_temp <- as.matrix(tdm)
+cloud_temp1 <- sort(rowSums(cloud_temp), decreasing = TRUE)
+cloud_temp2 <- data.frame(word = names(cloud_temp1), freq = cloud_temp1)
+set.seed(1986)
+
+```
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+wordcloud(words = cloud_temp2$word, freq = cloud_temp2$freq, min.freq = 1,
+          max.words=300, random.order = FALSE, rot.per = 0.35,
+          colors = brewer.pal(8, 'Dark2'))
+```
+
+
+## Simple Tokenization
+Bellow we can see a simple view of tokeniziton in three cases, One Word, Two Words and Three Words
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+Tokenizer  <- function(x) 
+                NGramTokenizer(x, Weka_control(min = 1, max = 1))
+
+
+Token1 <- DocumentTermMatrix(Corpus(VectorSource(corpus)),
+                             control = list(weighting = weightTf, 
+                                            tokenize = Tokenizer))
+
+
+Tokenizer  <- function(x) 
+        NGramTokenizer(x, Weka_control(min = 2, max = 2))
+
+Token2 <- DocumentTermMatrix(Corpus(VectorSource(corpus)),
+                             control = list(weighting = weightTf, 
+                                            tokenize = Tokenizer))
+
+Tokenizer  <- function(x) 
+        NGramTokenizer(x, Weka_control(min = 3, max = 3))
+
+Token3 <- DocumentTermMatrix(Corpus(VectorSource(corpus)),
+                             control = list(weighting = weightTf, 
+                                            tokenize = Tokenizer))
+
+freq1 <-  colSums(as.matrix(Token1))
+one_word <- data.frame(word = names(freq1), freq = freq1)
+one_word <- one_word[order(one_word$freq, decreasing=TRUE),]
+rownames(one_word) <- NULL
+rm(freq1)
+
+freq2 <-  colSums(as.matrix(Token2))
+two_word <- data.frame(word = names(freq2), freq = freq2)
+two_word <- two_word[order(two_word$freq, decreasing=TRUE),]
+rownames(two_word) <- NULL
+rm(freq2)
+
+freq3 <-  colSums(as.matrix(Token3))
+three_word <- data.frame(word = names(freq3), freq = freq3)
+three_word <- three_word[order(three_word$freq, decreasing=TRUE),]
+rownames(three_word) <- NULL
+rm(freq3)
+
+top10 <- head(one_word, 10)
+                
+p1 <- ggplot(top10, aes(reorder(word, -freq), freq))
+p1 <- p1 + geom_bar(stat = 'identity')
+p1 <- p1 + xlab('Word')
+p1 <- p1 + ylab('Frequnecy')
+p1 <- p1 + ggtitle('Top 10 Most Frequent Word -One Word')
+p1 <- p1 + theme(axis.text.x=element_text(angle=45, hjust=1))
+
+top10 <- head(two_word, 10)
+p2 <- ggplot(top10, aes(reorder(word, -freq), freq))
+p2 <- p2 + geom_bar(stat = 'identity')
+p2 <- p2 + xlab('Word')
+p2 <- p2 + ylab('Frequnecy')
+p2 <- p2 + ggtitle('Top 10 Most Frequent Word -Two Words')
+p2 <- p2 + theme(axis.text.x=element_text(angle=45, hjust=1))
+
+top10 <- head(three_word, 10)
+p3 <- ggplot(top10, aes(reorder(word, -freq), freq))
+p3 <- p3 + geom_bar(stat = 'identity')
+p3 <- p3 + xlab('Word')
+p3 <- p3 + ylab('Frequnecy')
+p3 <- p3 + ggtitle('Top 10 Most Frequent Word -Three Words')
+p3 <- p3 + theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+p1
+p2
+p3
+```
+
+## Further steps
+* More reading in Therory of NLP -ngrams.
+* Better automated data cleansing of corpus.
+* Code optimazation for better time processing.
+
+## Appendix
+**Code_Chunk_1**
+```{r, eval = FALSE,  message=FALSE, warning=FALSE}
+## File size (in MegaBytes/MB)
+file.info('data_source/en_US.blogs.txt')$size   / 1024^2
+file.info('data_source/en_US.news.txt')$size    / 1024^2
+file.info('data_source/en_US.twitter.txt')$size / 1024^2
+```
+
+
+**Code_Chunk_2**
+```{r, eval = FALSE,  message=FALSE, warning=FALSE}
+## Number of lines
+length <- as.data.frame(matrix(ncol = 2))
+length <- rbind(length, c('blogs.txt', length(blogs)))
+length <- rbind(length, c('news.txt', length(news)))
+length <- rbind(length, c('twitter.txt', length(twitter)))
+names(length) <- c('File', 'Lines')
+length <- length[-1,]
+rownames(length) <- NULL
+```
+
+**Code_Chunk_3**
+```{r, eval = FALSE,  message=FALSE, warning=FALSE}
+library(tm)
+library(SnowballC)
+library(RWeka)
+
+
+## Load Corpus
+load('data_source/corpus.RData')
+
+
+## Load profanity.csv and make custom functions for data cleansing
+# https://github.com/shutterstock/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/
+profanity <- readLines('data_source/profanity.csv', encoding = 'UTF-8')
+nonASCII <- function(x) iconv(x, 'latin1', 'ASCII', '')
+removeURL <- function(x) gsub('www[[:alnum:]]*.*|htt[[:alnum:]]*.*', '', x)
+
+
+## Processing
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, content_transformer(nonASCII))
+corpus <- tm_map(corpus, content_transformer(removeURL))
+corpus <- tm_map(corpus, removeWords, stopwords('SMART'))
+corpus <- tm_map(corpus, removePunctuation) 
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removeWords, stopwords('en'))
+corpus <- tm_map(corpus, removeWords, profanity)
+corpus <- tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, stemDocument) 
+
+rm(profanity, nonASCII, removeURL)
+
+
+## Stage the Data   
+dtm <- DocumentTermMatrix(corpus)
+tdm <- TermDocumentMatrix(corpus)
+```
+
+**Code_Chunk_4**
+```{r, eval = FALSE,  message=FALSE, warning=FALSE}
+## Count frequency of worlds
+freq <- colSums(as.matrix(dtm))
+wordCount <- data.frame(word = names(freq), freq = freq)
+wordCount <- wordCount[order(wordCount$freq, decreasing=TRUE),]
+rownames(wordCount) <- NULL
+rm(freq)
+library('ggplot2')
+
+top10 <- head(wordCount, 10)
+                
+p <- ggplot(top10, aes(reorder(word, -freq), freq))
+p <- p + geom_bar(stat = 'identity')
+p <- p + xlab('Word')
+p <- p + ylab('Frequnecy')
+p <- p + ggtitle('Top 10 Most Frequent Word With Cleansing')
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))
+
+
+## More plotes after cleansing, -Simple word comparison (from three txt files) by frequence
+library('wordcloud')
+comparison <- as.matrix(tdm)
+colnames(comparison) <- c('blogs', 'news', 'twitter')
+comparison.cloud(comparison,max.words=300,random.order=FALSE)
+
+### -Word Cloud by frequence
+library('wordcloud')
+comparison <- as.matrix(tdm)
+colnames(comparison) <- c('blogs', 'news', 'twitter')
+comparison.cloud(comparison,max.words=300,random.order=FALSE)
+
+cloud_temp <- as.matrix(tdm)
+cloud_temp1 <- sort(rowSums(cloud_temp), decreasing = TRUE)
+cloud_temp2 <- data.frame(word = names(cloud_temp1), freq = cloud_temp1)
+set.seed(1986)
+wordcloud(words = cloud_temp2$word, freq = cloud_temp2$freq, min.freq = 1,
+          max.words=300, random.order = FALSE, rot.per = 0.35,
+          colors = brewer.pal(8, 'Dark2'))
+```
+
+**Code_Chunk_5**
+```{r, eval = FALSE,  message=FALSE, warning=FALSE}
+## One Word
+Tokenizer  <- function(x) 
+                NGramTokenizer(x, Weka_control(min = 1, max = 1))
+
+
+Token1 <- DocumentTermMatrix(Corpus(VectorSource(corpus)),
+                             control = list(weighting = weightTf, 
+                                            tokenize = Tokenizer))
+
+## Two Words
+Tokenizer  <- function(x) 
+        NGramTokenizer(x, Weka_control(min = 2, max = 2))
+
+Token2 <- DocumentTermMatrix(Corpus(VectorSource(corpus)),
+                             control = list(weighting = weightTf, 
+                                            tokenize = Tokenizer))
+## Three Words
+Tokenizer  <- function(x) 
+        NGramTokenizer(x, Weka_control(min = 3, max = 3))
+
+Token3 <- DocumentTermMatrix(Corpus(VectorSource(corpus)),
+                             control = list(weighting = weightTf, 
+                                            tokenize = Tokenizer))
+## Data Frame One Word
+freq1 <-  colSums(as.matrix(Token1))
+one_word <- data.frame(word = names(freq1), freq = freq1)
+one_word <- one_word[order(one_word$freq, decreasing=TRUE),]
+rownames(one_word) <- NULL
+rm(freq1)
+
+## Data Frame Two Words
+freq2 <-  colSums(as.matrix(Token2))
+two_word <- data.frame(word = names(freq2), freq = freq2)
+two_word <- two_word[order(two_word$freq, decreasing=TRUE),]
+rownames(two_word) <- NULL
+rm(freq2)
+
+## Data Frame Three Words
+freq3 <-  colSums(as.matrix(Token3))
+three_word <- data.frame(word = names(freq3), freq = freq3)
+three_word <- three_word[order(three_word$freq, decreasing=TRUE),]
+rownames(three_word) <- NULL
+rm(freq3)
+
+## Top10 One Word and Plot
+top10 <- head(one_word, 10)
+                
+p1 <- ggplot(top10, aes(reorder(word, -freq), freq))
+p1 <- p1 + geom_bar(stat = 'identity')
+p1 <- p1 + xlab('Word')
+p1 <- p1 + ylab('Frequnecy')
+p1 <- p1 + ggtitle('Top 10 Most Frequent Word -One Word')
+p1 <- p1 + theme(axis.text.x=element_text(angle=45, hjust=1))
+p1
+
+## Top10 Two Words and Plot
+top10 <- head(two_word, 10)
+p2 <- ggplot(top10, aes(reorder(word, -freq), freq))
+p2 <- p2 + geom_bar(stat = 'identity')
+p2 <- p2 + xlab('Word')
+p2 <- p2 + ylab('Frequnecy')
+p2 <- p2 + ggtitle('Top 10 Most Frequent Word -Two Words')
+p2 <- p2 + theme(axis.text.x=element_text(angle=45, hjust=1))
+p2
+
+## Top10 Three Words and Plot
+top10 <- head(three_word, 10)
+p3 <- ggplot(top10, aes(reorder(word, -freq), freq))
+p3 <- p3 + geom_bar(stat = 'identity')
+p3 <- p3 + xlab('Word')
+p3 <- p3 + ylab('Frequnecy')
+p3 <- p3 + ggtitle('Top 10 Most Frequent Word -Three Words')
+p3 <- p3 + theme(axis.text.x=element_text(angle=45, hjust=1))
+p3
+```
